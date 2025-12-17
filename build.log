@@ -1,0 +1,5 @@
+
+> scrapper@1.0.0 build
+> tsc
+
+src/services/scraper.ts(67,41): error TS2353: Object literal may only specify known properties, and 'newState' does not exist in type '{ timeout?: number | undefined; waitUntil?: "load" | "domcontentloaded" | "networkidle" | "commit" | undefined; }'.
