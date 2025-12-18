@@ -33,7 +33,7 @@ export class ScraperService {
             onStatus('INIT', '🚀 Iniciando browser (Playwright)...');
 
             this.browser = await chromium.launch({
-                headless: true, // Use headless in production/WSL usually, or false for debug. 
+                headless: false, // Use headless in production/WSL usually, or false for debug. 
                 // Playwright handles headless much better.
                 args: [
                     '--no-sandbox',
@@ -46,7 +46,9 @@ export class ScraperService {
             // Create context with specific user agent
             const context = await this.browser.newContext({
                 userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                viewport: { width: 1280, height: 720 }
+                viewport: { width: 1280, height: 720 },
+                locale: 'pt-BR',
+                timezoneId: 'America/Sao_Paulo'
             });
 
             const page = await context.newPage();
