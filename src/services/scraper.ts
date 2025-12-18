@@ -97,27 +97,13 @@ export class ScraperService {
 
             await btnSistemaProvas.scrollIntoViewIfNeeded();
 
-            // Tenta capturar popup
             const [popup] = await Promise.all([
-                page.waitForEvent('popup', { timeout: 10000 }).catch(() => null),
+                page.waitForEvent('popup', { timeout: 5000 }).catch(() => null),
                 btnSistemaProvas.click({ force: true })
             ]);
 
-            let activePage = popup || page;
-
-            console.log(popup ? '📢 Popup detectado!' : '⚠️ Nenhum popup detectado, usando página principal.');
-
-            // Se não houve popup, pode ser navegação na mesma página. Vamos esperar mudar a URL ou carregar.
-            if (!popup) {
-                try {
-                    await page.waitForLoadState('networkidle', { timeout: 10000 });
-                } catch (e) {
-                    console.log('Timeout waiting for networkidle on main page, continuing...');
-                }
-            } else {
-                await popup.waitForLoadState('domcontentloaded');
-            }
-
+            const activePage = popup || page;
+            await activePage.waitForLoadState('networkidle');
             console.log(`Working on URL: ${activePage.url()}`);
 
             onStatus('NAVIGATE', '🚗 Página de provas aberta...');
