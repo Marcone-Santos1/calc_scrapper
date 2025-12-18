@@ -5,14 +5,30 @@ interface ScraperOptions {
     email: string;
     password: string;
     targetUrl: string;
+    ignoredExams?: string[];
     onStatus: (step: string, message: string) => void;
     onQuestion: (question: any) => void;
+    onExamDone: (examData: any) => void;
 }
+
+const ENVIRONMENT = process.env.ENVIRONMENT || "prod";
 
 export class ScraperService {
     private browser: Browser | null = null;
+    private isAborted: boolean = false;
 
-    async scrape({ email, password, targetUrl, onStatus, onQuestion }: ScraperOptions): Promise<void> {
+    async abort() {
+        this.isAborted = true;
+        if (this.browser) {
+            try {
+                console.log('🛑 Abortando navegador...');
+                await this.browser.close();
+            } catch (e) { /* Ignora erro se já fechou */ }
+            this.browser = null;
+        }
+    }
+
+    async scrape({ email, password, targetUrl, ignoredExams, onStatus, onQuestion, onExamDone }: ScraperOptions): Promise<void> {
         try {
             onStatus('INIT', '🚀 Iniciando browser (Playwright)...');
 
@@ -47,7 +63,8 @@ export class ScraperService {
 
             // Simulate navigation to target
             onStatus('NAVIGATE', '🚗 Navegando para a URL...');
-            await page.goto(targetUrl, { waitUntil: 'domcontentloaded' });
+            await page.goto(targetUrl, { waitUntil: 'networkidle' });
+            if (this.isAborted) throw new Error('Processo cancelado pelo usuário.');
 
             onStatus('LOGIN', '🔐 Autenticando...');
 
@@ -64,12 +81,13 @@ export class ScraperService {
 
             // Click and wait for navigation - Playwright handles this well, but explicit wait is safer for full page loads
             await Promise.all([
-                page.waitForURL('**', { waitUntil: 'domcontentloaded' }), // Wait for any URL change/load
+                page.waitForURL('**', { waitUntil: 'networkidle' }), // Wait for any URL change/load
                 page.locator('#form\\:loginBtn\\:loginBtn').click(),
             ]);
+            if (this.isAborted) throw new Error('Processo cancelado pelo usuário.');
 
             // Optional stability delay
-            await page.waitForTimeout(2000);
+            await page.waitForTimeout(5000);
 
             onStatus('NAVIGATE', '🚗 Indo para a página de provas...');
 
@@ -85,10 +103,12 @@ export class ScraperService {
             ]);
 
             const activePage = popup || page;
-            await activePage.waitForLoadState('domcontentloaded');
+            await activePage.waitForLoadState('networkidle');
             console.log(`Working on URL: ${activePage.url()}`);
 
             onStatus('NAVIGATE', '🚗 Página de provas aberta...');
+
+            if (this.isAborted) throw new Error('Processo cancelado pelo usuário.');
 
             const menuResultados = activePage.locator('span').filter({ hasText: 'Resultados' }).first();
             await menuResultados.waitFor({ state: 'visible' });
@@ -98,7 +118,7 @@ export class ScraperService {
             await menuResultados.dispatchEvent('mouseover');
 
             const linkAvaliacoes = activePage.locator('a').filter({ hasText: 'Avaliações' }).first();
-            await linkAvaliacoes.waitFor({ state: 'attached', timeout: 10000 });
+            await linkAvaliacoes.waitFor({ state: 'attached', timeout: 3000 });
 
             const hrefAvaliacoes = await linkAvaliacoes.getAttribute('href');
 
@@ -110,11 +130,13 @@ export class ScraperService {
                 await activePage.goto(hrefAvaliacoes);
             } else {
                 await linkAvaliacoes.click();
-                await activePage.waitForLoadState('domcontentloaded');
+                await activePage.waitForLoadState('networkidle');
             }
 
 
             onStatus('ANALYZING', '📅 Mapeando anos letivos disponíveis...');
+
+            if (this.isAborted) throw new Error('Processo cancelado pelo usuário.');
 
             const yearSelectSelector = 'xpath=//h4[contains(., "Ano letivo:")]/../following-sibling::div//select';
 
@@ -133,21 +155,33 @@ export class ScraperService {
 
             for (const year of yearsData) {
 
+                if (this.isAborted) throw new Error('Processo cancelado pelo usuário.');
+
                 console.log(`Verificando ano: ${year.label}...`);
 
                 onStatus('PROCESSING', `📂 Verificando ano: ${year.label}...`);
 
                 const currentYearValue = await activePage.locator(yearSelectSelector).inputValue();
 
+                console.log(`   -> Ano atual: ${currentYearValue}`);
+                console.log(`   -> Ano alvo: ${year.value}`);
                 if (currentYearValue !== year.value) {
                     await Promise.all([
-                        activePage.waitForLoadState('domcontentloaded'),
-                        // activePage.waitForURL((url) => url.toString().includes(year.value)), 
+                        activePage.waitForResponse(resp => resp.status() === 200, { timeout: 10000 }).catch(() => { }), // Tenta pegar o request XHR
+                        activePage.waitForLoadState('networkidle'),
                         activePage.locator(yearSelectSelector).selectOption(year.value)
                     ]);
 
                     // Pequeno delay de estabilidade para garantir que o JS do select de Provas rodou
-                    await activePage.waitForTimeout(1000);
+                    await activePage.waitForTimeout(3000);
+                }
+
+                const verifiedYear = await activePage.locator(yearSelectSelector).inputValue();
+                if (verifiedYear !== year.value) {
+                    console.error(`❌ Falha ao mudar para o ano ${year.label}. O sistema manteve ${verifiedYear}. Tentando novamente...`);
+                    // Retry logic ou Skip
+                    onStatus('ERROR', `❌ Falha ao mudar para o ano ${year.label}. O sistema manteve ${verifiedYear}. Tentando novamente...`);
+                    continue;
                 }
 
                 // 4. Agora verificamos o select de Provas (name="PROVA")
@@ -170,21 +204,39 @@ export class ScraperService {
 
                 if (availableExams.length > 0) {
                     onStatus('FOUND', `✅ Encontradas ${availableExams.length} prova(s) em ${year.label}`);
+                    console.log(`   -> Provas encontradas: ${availableExams.map(exam => exam.text).join(', ')}`);
 
                     // --- AQUI VOCÊ INICIA A EXTRAÇÃO DA PROVA ---
                     for (const exam of availableExams) {
+
+                        if (this.isAborted) throw new Error('Processo cancelado pelo usuário.');
+
                         console.log(`   -> Processando prova: ${exam.text} (${exam.value})`);
                         const disciplinas = ['INT100', 'LET100', 'MATE100', 'MMB002'];
 
                         // Exemplo de lógica para selecionar a prova (se ela também causar reload)
                         await Promise.all([
-                            activePage.waitForLoadState('domcontentloaded'),
+                            activePage.waitForLoadState('networkidle'),
                             activePage.locator(provasSelectSelector).selectOption(exam.value)
                         ]);
 
-                        if (disciplinas.some(disciplina => exam.text.includes(disciplina))) {
-                            console.log(`   -> Prova ${exam.text} não pertence à disciplina ${disciplinas.join(', ')} Pula...`);
-                            continue;
+                        await activePage.waitForTimeout(3000);
+
+                        console.log(`   -> Ambiente: ${ENVIRONMENT}`);
+                        if (ENVIRONMENT === 'dev') {
+                            if (disciplinas.some(disciplina => exam.text.includes(disciplina))) {
+                                console.log(`   -> Prova ${exam.text} não pertence à disciplina ${disciplinas.join(', ')} Pula...`);
+                                continue;
+                            }
+                        }
+
+                        console.log(`Ignored exams: ${ignoredExams}`);
+                        console.log(`Exam text: ${exam.text}`);
+                        console.log(`Validating: ${exam.text && ignoredExams?.includes(exam.text)}`)
+                        if (exam.text && ignoredExams?.includes(exam.text)) {
+                            console.log(` ⏭️ Pulando prova já processada: ${exam.text}`);
+                            onStatus('SKIPPED', `⏭️ Pulando prova já processada: ${exam.text}`);
+                            continue; // Vai para a próxima prova imediatamente
                         }
 
                         try {
@@ -196,6 +248,9 @@ export class ScraperService {
 
                         console.log(`Working on URL: ${activePage.url()}`);
 
+                        // get subject name from exam text
+                        const subjectName = exam.text.split(' - ')[1].trim();
+
                         const questionButtons = activePage.locator('button').filter({ hasText: /^Q\d+/ });
 
                         const totalQuestions = await questionButtons.count();
@@ -204,6 +259,8 @@ export class ScraperService {
                         console.log(`   -> Encontradas ${totalQuestions} questões para extrair.`);
 
                         for (let i = 0; i < totalQuestions; i++) {
+
+                            if (this.isAborted) throw new Error('Processo cancelado pelo usuário.');
 
                             const currentButtons = await activePage.locator('button').filter({ hasText: /^Q\d+/ }).all();
 
@@ -214,16 +271,17 @@ export class ScraperService {
                             const buttonText = await button.innerText(); // Ex: "Q01"
 
                             onStatus('PROCESSING', `👉 Processando questão ${buttonText}...`);
+                            if (this.isAborted) throw new Error('Processo cancelado pelo usuário.');
 
                             // Clicar e esperar navegação
                             // Verificamos se já estamos na questão certa (se o botão tiver uma classe ativa, por exemplo btn-red vs btn-default)
                             // Mas por segurança, clicamos para garantir.
                             await Promise.all([
-                                activePage.waitForLoadState('domcontentloaded'),
+                                activePage.waitForLoadState('networkidle'),
                                 button.click()
                             ]);
 
-                            await activePage.waitForTimeout(500);
+                            await activePage.waitForTimeout(3000);
 
                             // --- 1. Extração do Enunciado ---
                             // O enunciado está dentro de .col-md-7.resposta > div (com borda tracejada)
@@ -355,9 +413,12 @@ export class ScraperService {
                                 };
                             });
 
+                            if (this.isAborted) throw new Error('Processo cancelado pelo usuário.');
+
                             // 4. Montagem do Objeto Final
                             const questionObj = {
-                                id: buttonText, // Ex: "Q01"
+                                id: buttonText, // Ex: "Q01",
+                                subjectName,
                                 statement: statementText,
                                 alternatives: alternativesData.alternatives,
                                 justification: justificationText,
@@ -375,6 +436,16 @@ export class ScraperService {
 
                         }
 
+                        if (onExamDone) {
+                                console.log(`   -> Exame ${exam.text} processado.`);
+                                onStatus('EXAM_DONE', `Exame ${exam.text} processado.`);
+                                onExamDone({
+                                    year: year.label,
+                                    examId: exam.value,
+                                    examName: exam.text
+                                });
+                            }
+
                         // Chamar sua função de extração de questões aqui...
                     }
 
@@ -387,6 +458,7 @@ export class ScraperService {
 
         } catch (error) {
             console.error('Scraper Error:', error);
+            if (this.isAborted) throw new Error('Processo cancelado pelo usuário.');
             throw error;
         } finally {
             if (this.browser) {

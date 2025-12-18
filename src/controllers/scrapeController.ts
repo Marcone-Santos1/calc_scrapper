@@ -11,7 +11,9 @@ const queue: (() => void)[] = [];
 const scrapeSchema = z.object({
     email: z.string().min(1),
     password: z.string().min(1),
+    ignoredExams: z.array(z.string()).optional(),
 });
+
 
 // Process Queue Helper
 const processQueue = () => {
@@ -26,6 +28,7 @@ const processQueue = () => {
 export const scrapeStreamController = async (req: Request, res: Response) => {
     // Input Validation
     const validationResult = scrapeSchema.safeParse(req.body);
+    const scraper = new ScraperService();
 
     if (!validationResult.success) {
         return res.status(400).json({ error: validationResult.error });
@@ -58,9 +61,12 @@ export const scrapeStreamController = async (req: Request, res: Response) => {
         }
     };
 
-    req.on('close', () => {
+    res.on('close', async () => {
+        console.log('🔌 Conexão encerrada pelo cliente. Abortando...');
         isClosed = true;
+        await scraper.abort(); // <--- Mata o Playwright
         clearInterval(heartbeat);
+        // Não tentamos escrever no res aqui pois a conexão já fechou
     });
 
     // Validated Data - Mutable for security cleanup
@@ -75,12 +81,11 @@ export const scrapeStreamController = async (req: Request, res: Response) => {
         }
 
         activeScrapes++;
-        const scraper = new ScraperService();
 
         // Handle disconnect during execution
         const closeListener = async () => {
             console.log('Client disconnected, active scraper stopping...');
-            await scraper.close();
+            await scraper.abort();
         };
         req.on('close', closeListener);
 
@@ -91,12 +96,16 @@ export const scrapeStreamController = async (req: Request, res: Response) => {
                 email,
                 password,
                 targetUrl: TARGET_URL,
+                ignoredExams: validationResult.data.ignoredExams || [],
                 onStatus: (step, message) => {
                     sendEvent('status', { step, message });
                 },
                 onQuestion: (question) => {
                     questionCount++;
                     sendEvent('question', question);
+                },
+                onExamDone: (examData) => {
+                    sendEvent('exam_done', examData); // Envia para o Front
                 }
             });
 
