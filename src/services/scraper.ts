@@ -33,7 +33,7 @@ export class ScraperService {
             onStatus('INIT', '🚀 Iniciando browser (Playwright)...');
 
             this.browser = await chromium.launch({
-                headless: false, // Use headless in production/WSL usually, or false for debug. 
+                headless: true, // Use headless in production/WSL usually, or false for debug. 
                 // Playwright handles headless much better.
                 args: [
                     '--no-sandbox',
@@ -220,7 +220,7 @@ export class ScraperService {
                             activePage.locator(provasSelectSelector).selectOption(exam.value)
                         ]);
 
-                        await activePage.waitForTimeout(3000);
+                        await activePage.waitForTimeout(1500);
 
                         console.log(`   -> Ambiente: ${ENVIRONMENT}`);
                         if (ENVIRONMENT === 'dev') {
@@ -281,7 +281,7 @@ export class ScraperService {
                                 button.click()
                             ]);
 
-                            await activePage.waitForTimeout(3000);
+                            await activePage.waitForTimeout(1500);
 
                             // --- 1. Extração do Enunciado ---
                             // O enunciado está dentro de .col-md-7.resposta > div (com borda tracejada)
@@ -437,14 +437,14 @@ export class ScraperService {
                         }
 
                         if (onExamDone) {
-                                console.log(`   -> Exame ${exam.text} processado.`);
-                                onStatus('EXAM_DONE', `Exame ${exam.text} processado.`);
-                                onExamDone({
-                                    year: year.label,
-                                    examId: exam.value,
-                                    examName: exam.text
-                                });
-                            }
+                            console.log(`   -> Exame ${exam.text} processado.`);
+                            onStatus('EXAM_DONE', `Exame ${exam.text} processado.`);
+                            onExamDone({
+                                year: year.label,
+                                examId: exam.value,
+                                examName: exam.text
+                            });
+                        }
 
                         // Chamar sua função de extração de questões aqui...
                     }
