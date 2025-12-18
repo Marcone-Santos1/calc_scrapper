@@ -33,7 +33,7 @@ export class ScraperService {
             onStatus('INIT', '🚀 Iniciando browser (Playwright)...');
 
             this.browser = await chromium.launch({
-                headless: false, // Use headless in production/WSL usually, or false for debug. 
+                headless: true, // Use headless in production/WSL usually, or false for debug. 
                 // Playwright handles headless much better.
                 args: [
                     '--no-sandbox',
