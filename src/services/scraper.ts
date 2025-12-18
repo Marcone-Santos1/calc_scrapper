@@ -98,7 +98,7 @@ export class ScraperService {
             await btnSistemaProvas.scrollIntoViewIfNeeded();
 
             const [popup] = await Promise.all([
-                page.waitForEvent('popup', { timeout: 5000 }).catch(() => null),
+                page.waitForEvent('popup', { timeout: 20000 }).catch(() => null),
                 btnSistemaProvas.click({ force: true })
             ]);
 
