@@ -175,7 +175,7 @@ export class ScraperService {
                     ]);
 
                     // Pequeno delay de estabilidade para garantir que o JS do select de Provas rodou
-                    await activePage.waitForTimeout(3000);
+                    await activePage.waitForTimeout(5000);
                 }
 
                 const verifiedYear = await activePage.locator(yearSelectSelector).inputValue();
@@ -218,11 +218,11 @@ export class ScraperService {
 
                         // Exemplo de lógica para selecionar a prova (se ela também causar reload)
                         await Promise.all([
-                            activePage.waitForLoadState('networkidle'),
-                            activePage.locator(provasSelectSelector).selectOption(exam.value)
+                            activePage.waitForLoadState('networkidle', { timeout: 60000 }),
+                            activePage.locator(provasSelectSelector).selectOption(exam.value, { timeout: 60000 })
                         ]);
 
-                        await activePage.waitForTimeout(1500);
+                        await activePage.waitForTimeout(5500);
 
                         console.log(`   -> Ambiente: ${ENVIRONMENT}`);
                         if (ENVIRONMENT === 'dev') {
@@ -274,6 +274,8 @@ export class ScraperService {
 
                             onStatus('PROCESSING', `👉 Processando questão ${buttonText}...`);
                             if (this.isAborted) throw new Error('Processo cancelado pelo usuário.');
+
+                            await activePage.waitForTimeout(3500);
 
                             // Clicar e esperar navegação
                             // Verificamos se já estamos na questão certa (se o botão tiver uma classe ativa, por exemplo btn-red vs btn-default)
