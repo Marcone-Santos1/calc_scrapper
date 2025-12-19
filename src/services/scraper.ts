@@ -33,7 +33,7 @@ export class ScraperService {
             onStatus('INIT', '🚀 Iniciando browser (Playwright)...');
 
             this.browser = await chromium.launch({
-                headless: true, // Use headless in production/WSL usually, or false for debug. 
+                headless: false, // Use headless in production/WSL usually, or false for debug. 
                 // Playwright handles headless much better.
                 args: [
                     '--no-sandbox',
@@ -93,15 +93,22 @@ export class ScraperService {
 
             onStatus('NAVIGATE', '🚗 Indo para a página de provas...');
 
-            const btnSistemaProvas = page.locator(
-                'a:has(span.tituloCampos:text("Sistema de Provas"))'
-            );
+            // const btnSistemaProvas = page.locator(
+            //     'a:has(span.tituloCampos:text("Sistema de Provas"))'
+            // );
 
-            await btnSistemaProvas.scrollIntoViewIfNeeded();
+            // await btnSistemaProvas.scrollIntoViewIfNeeded();
+
+            // const [popup] = await Promise.all([
+            //     page.waitForEvent('popup', { timeout: 20000 }).catch(() => null),
+            //     btnSistemaProvas.click({ force: true })
+            // ]);
 
             const [popup] = await Promise.all([
                 page.waitForEvent('popup', { timeout: 20000 }).catch(() => null),
-                btnSistemaProvas.click({ force: true })
+                page.evaluate(() => {
+                    (window as any).RichFaces.ajax("form:j_idt577:botaoAcessoSistemaProvasMestreGR", event, { "incId": "1" });
+                })
             ]);
 
             const activePage = popup || page;
@@ -218,8 +225,8 @@ export class ScraperService {
 
                         // Exemplo de lógica para selecionar a prova (se ela também causar reload)
                         await Promise.all([
-                            activePage.waitForLoadState('networkidle', { timeout: 60000 }),
-                            activePage.locator(provasSelectSelector).selectOption(exam.value, { timeout: 60000 })
+                            activePage.waitForLoadState('networkidle', { timeout: 120000 }),
+                            activePage.locator(provasSelectSelector).selectOption(exam.value, { timeout: 120000 })
                         ]);
 
                         await activePage.waitForTimeout(5500);
@@ -290,6 +297,14 @@ export class ScraperService {
                             // --- 1. Extração do Enunciado ---
                             // O enunciado está dentro de .col-md-7.resposta > div (com borda tracejada)
                             const statementEl = activePage.locator('.col-md-7.resposta > div').first();
+                            try {
+                                await statementEl.waitFor({ state: 'visible', timeout: 15000 });
+                            } catch (e) {
+                                console.log(`⚠️ Enunciado não carregou para a questão ${buttonText}. Tentando clicar novamente.`);
+                                await button.click({ force: true });
+                                await activePage.waitForTimeout(2000);
+                                await statementEl.waitFor({ state: 'visible', timeout: 10000 });
+                            }
                             const statementText = await statementEl.innerText();
 
                             // --- 2. Extração da Justificativa ---
