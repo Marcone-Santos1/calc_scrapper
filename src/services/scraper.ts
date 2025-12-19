@@ -53,7 +53,7 @@ export class ScraperService {
             // Create context with specific user agent
             const context = await this.browser.newContext({
                 userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                viewport: { width: 1280, height: 720 },
+                viewport: { width: 1920, height: 1080 },
                 locale: 'pt-BR',
                 timezoneId: 'America/Sao_Paulo'
             });
@@ -100,52 +100,62 @@ export class ScraperService {
 
             onStatus('NAVIGATE', '🚗 Indo para a página de provas...');
 
-            // const btnSistemaProvas = page.locator(
-            //     'a:has(span.tituloCampos:text("Sistema de Provas"))'
-            // );
+            const btnProvas = page.locator('a[id$="botaoAcessoSistemaProvasMestreGR"]');
 
-            // await btnSistemaProvas.scrollIntoViewIfNeeded();
 
-            // const [popup] = await Promise.all([
-            //     page.waitForEvent('popup', { timeout: 20000 }).catch(() => null),
-            //     btnSistemaProvas.click({ force: true })
-            // ]);
+            // 3. Clique com FORCE: TRUE
+            // O force: true é vital aqui porque o RichFaces as vezes coloca spans transparentes em cima dos botões.
+            console.log('✅ Botão encontrado via seletor. Clicando...');
+            
+            // Tratamento de Nova Aba (Popup)
+            const [newPage] = await Promise.all([
+                page.context().waitForEvent('page', { timeout: 10000 }).catch(() => null),
+                btnProvas.click({ force: true }) // <--- O SEGREDO ESTÁ AQUI
+            ]);
+
+            // ... (lógica de verificar se abriu newPage ou continuou na mesma, igual antes)
+            let activePage = newPage || page;
+            
+            if (newPage) await newPage.waitForLoadState('domcontentloaded');
+            else await page.waitForLoadState('networkidle');
+            
+            console.log('📍 URL Pós-clique:', activePage.url());
 
             onStatus('NAVIGATE', 'Clicando para acessar sistema de provas...');
 
-            const [newPage] = await Promise.all([
-                // 1. Mude de 'page' para 'popup'
-                // 2. Reduza o timeout para 10s (10000ms). Se não abrir nesse tempo, assumimos que não abriu.
-                page.waitForEvent('popup', { timeout: 10000 }).catch((e) => {
-                    console.log('⚠️ Nenhuma nova aba/popup detectada (timeout), continuando na mesma página.');
-                    return null; 
-                }),
-                page.evaluate(() => {
-                    // @ts-ignore
-                    if (typeof window.RichFaces !== 'undefined') {
-                        // @ts-ignore
-                        window.RichFaces.ajax(
-                            "form:j_idt577:botaoAcessoSistemaProvasMestreGR",
-                            null,
-                            { incId: "1" }
-                        );
-                    } else {
-                        console.error('RichFaces não encontrado no window!');
-                    }
-                })
-            ]);
+            // const [newPage] = await Promise.all([
+            //     // 1. Mude de 'page' para 'popup'
+            //     // 2. Reduza o timeout para 10s (10000ms). Se não abrir nesse tempo, assumimos que não abriu.
+            //     page.waitForEvent('popup', { timeout: 10000 }).catch((e) => {
+            //         console.log('⚠️ Nenhuma nova aba/popup detectada (timeout), continuando na mesma página.');
+            //         return null;
+            //     }),
+            //     page.evaluate(() => {
+            //         // @ts-ignore
+            //         if (typeof window.RichFaces !== 'undefined') {
+            //             // @ts-ignore
+            //             window.RichFaces.ajax(
+            //                 "form:j_idt577:botaoAcessoSistemaProvasMestreGR",
+            //                 null,
+            //                 { incId: "1" }
+            //             );
+            //         } else {
+            //             console.error('RichFaces não encontrado no window!');
+            //         }
+            //     })
+            // ]);
 
             // Se newPage existir, use-o. Se for null, continue na page atual.
-            let activePage = newPage || page;
+            // let activePage = newPage || page;
 
             // Se for um popup, precisamos garantir que ele carregou
-            if (newPage) {
-                await newPage.waitForLoadState('domcontentloaded');
-            } else {
-                // Se continuou na mesma página, talvez tenha ocorrido apenas um redirect ou AJAX
-                // Esperamos a rede acalmar para garantir
-                await page.waitForLoadState('networkidle');
-            }
+            // if (newPage) {
+            //     await newPage.waitForLoadState('domcontentloaded');
+            // } else {
+            //     // Se continuou na mesma página, talvez tenha ocorrido apenas um redirect ou AJAX
+            //     // Esperamos a rede acalmar para garantir
+            //     await page.waitForLoadState('networkidle');
+            // }
 
             console.log('URL Ativa:', activePage.url());
 
