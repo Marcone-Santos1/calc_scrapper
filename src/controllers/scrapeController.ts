@@ -2,8 +2,12 @@ import { Request, Response } from 'express';
 import { z } from 'zod';
 import { ScraperService } from '../services/scraper';
 
+import dotenv from 'dotenv';
+dotenv.config();
+
 // Queue Configuration
 const MAX_CONCURRENCY = 3;
+const ENVIRONMENT = process.env.ENVIRONMENT || "dev";
 const TARGET_URL = process.env.TARGET_URL || "https://sei.univesp.br/index.xhtml";
 let activeScrapes = 0;
 const queue: (() => void)[] = [];
@@ -28,7 +32,7 @@ const processQueue = () => {
 export const scrapeStreamController = async (req: Request, res: Response) => {
     // Input Validation
     const validationResult = scrapeSchema.safeParse(req.body);
-    const scraper = new ScraperService();
+    const scraper = new ScraperService(ENVIRONMENT);
 
     if (!validationResult.success) {
         return res.status(400).json({ error: validationResult.error });

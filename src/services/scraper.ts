@@ -11,11 +11,15 @@ interface ScraperOptions {
     onExamDone: (examData: any) => void;
 }
 
-const ENVIRONMENT = process.env.ENVIRONMENT || "prod";
-
 export class ScraperService {
     private browser: Browser | null = null;
     private isAborted: boolean = false;
+    private environment: string;
+
+    constructor(environment: string) {
+        console.log('Environment:', environment);
+        this.environment = environment;
+    }
 
     async abort() {
         this.isAborted = true;
@@ -33,7 +37,7 @@ export class ScraperService {
             onStatus('INIT', '🚀 Iniciando browser (Playwright)...');
 
             this.browser = await chromium.launch({
-                headless: false, // Use headless in production/WSL usually, or false for debug. 
+                headless: this.environment !== 'dev', // Use headless in production/WSL usually, or false for debug. 
                 // Playwright handles headless much better.
                 args: [
                     '--no-sandbox',
@@ -231,8 +235,8 @@ export class ScraperService {
 
                         await activePage.waitForTimeout(5500);
 
-                        console.log(`   -> Ambiente: ${ENVIRONMENT}`);
-                        if (ENVIRONMENT === 'dev') {
+                        console.log(`   -> Ambiente: ${this.environment}`);
+                        if (this.environment === 'dev') {
                             if (disciplinas.some(disciplina => exam.text.includes(disciplina))) {
                                 console.log(`   -> Prova ${exam.text} não pertence à disciplina ${disciplinas.join(', ')} Pula...`);
                                 continue;
