@@ -44,6 +44,8 @@ export class ScraperService {
                     '--disable-setuid-sandbox',
                     '--disable-dev-shm-usage',
                     '--disable-gpu',
+                    '--window-size=1920,1080',
+                    '--disable-blink-features=AutomationControlled'
                 ]
             });
 
@@ -60,7 +62,7 @@ export class ScraperService {
             // Optimization - Block Resources via Route
             await page.route('**/*', (route) => {
                 const resourceType = route.request().resourceType();
-                if (['image', 'font', 'media'].includes(resourceType)) {
+                if (['image', 'font'].includes(resourceType)) {
                     route.abort();
                 } else {
                     route.continue();
