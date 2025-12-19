@@ -108,18 +108,21 @@ export class ScraperService {
             //     btnSistemaProvas.click({ force: true })
             // ]);
 
-            const [popup] = await Promise.all([
-                page.waitForEvent('popup', { timeout: 120000 }).catch(() => null),
-                page.evaluate(() => {
-                    (window as any).RichFaces.ajax("form:j_idt577:botaoAcessoSistemaProvasMestreGR", event, { "incId": "1" });
-                })
+            const [newPage] = await Promise.all([
+            page.context().waitForEvent('page', { timeout: 120000 }).catch(() => null),
+            page.evaluate(() => {
+                (window as any).RichFaces.ajax(
+                "form:j_idt577:botaoAcessoSistemaProvasMestreGR",
+                event,
+                { incId: "1" }
+                );
+            })
             ]);
 
-            console.log(`Popup: ${popup}`);
+            const activePage = newPage || page;
 
-            const activePage = popup || page;
-            await activePage.waitForLoadState('networkidle');
-            console.log(`Working on URL: ${activePage.url()}`);
+            await activePage.waitForLoadState('domcontentloaded');
+            console.log('URL:', activePage.url());
 
             onStatus('NAVIGATE', '🚗 Página de provas aberta...');
 
