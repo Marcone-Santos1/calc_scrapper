@@ -45,7 +45,8 @@ export class ScraperService {
                     '--disable-dev-shm-usage',
                     '--disable-gpu',
                     '--window-size=1920,1080',
-                    '--disable-blink-features=AutomationControlled'
+                    '--disable-blink-features=AutomationControlled',
+                    '--disable-popup-blocking',
                 ]
             });
 
@@ -110,21 +111,43 @@ export class ScraperService {
             //     btnSistemaProvas.click({ force: true })
             // ]);
 
+            onStatus('NAVIGATE', 'Clicando para acessar sistema de provas...');
+
             const [newPage] = await Promise.all([
-            page.context().waitForEvent('page', { timeout: 120000 }).catch(() => null),
-            page.evaluate(() => {
-                (window as any).RichFaces.ajax(
-                "form:j_idt577:botaoAcessoSistemaProvasMestreGR",
-                event,
-                { incId: "1" }
-                );
-            })
+                // 1. Mude de 'page' para 'popup'
+                // 2. Reduza o timeout para 10s (10000ms). Se não abrir nesse tempo, assumimos que não abriu.
+                page.waitForEvent('popup', { timeout: 10000 }).catch((e) => {
+                    console.log('⚠️ Nenhuma nova aba/popup detectada (timeout), continuando na mesma página.');
+                    return null; 
+                }),
+                page.evaluate(() => {
+                    // @ts-ignore
+                    if (typeof window.RichFaces !== 'undefined') {
+                        // @ts-ignore
+                        window.RichFaces.ajax(
+                            "form:j_idt577:botaoAcessoSistemaProvasMestreGR",
+                            null,
+                            { incId: "1" }
+                        );
+                    } else {
+                        console.error('RichFaces não encontrado no window!');
+                    }
+                })
             ]);
 
-            const activePage = newPage || page;
+            // Se newPage existir, use-o. Se for null, continue na page atual.
+            let activePage = newPage || page;
 
-            await activePage.waitForLoadState('domcontentloaded');
-            console.log('URL:', activePage.url());
+            // Se for um popup, precisamos garantir que ele carregou
+            if (newPage) {
+                await newPage.waitForLoadState('domcontentloaded');
+            } else {
+                // Se continuou na mesma página, talvez tenha ocorrido apenas um redirect ou AJAX
+                // Esperamos a rede acalmar para garantir
+                await page.waitForLoadState('networkidle');
+            }
+
+            console.log('URL Ativa:', activePage.url());
 
             onStatus('NAVIGATE', '🚗 Página de provas aberta...');
 
