@@ -106,7 +106,7 @@ export class ScraperService {
             // 3. Clique com FORCE: TRUE
             // O force: true é vital aqui porque o RichFaces as vezes coloca spans transparentes em cima dos botões.
             console.log('✅ Botão encontrado via seletor. Clicando...');
-            
+
             // Tratamento de Nova Aba (Popup)
             const [newPage] = await Promise.all([
                 page.context().waitForEvent('page', { timeout: 10000 }).catch(() => null),
@@ -115,10 +115,10 @@ export class ScraperService {
 
             // ... (lógica de verificar se abriu newPage ou continuou na mesma, igual antes)
             let activePage = newPage || page;
-            
+
             if (newPage) await newPage.waitForLoadState('domcontentloaded');
             else await page.waitForLoadState('networkidle');
-            
+
             console.log('📍 URL Pós-clique:', activePage.url());
 
             onStatus('NAVIGATE', 'Clicando para acessar sistema de provas...');
@@ -302,7 +302,9 @@ export class ScraperService {
                         console.log(`Working on URL: ${activePage.url()}`);
 
                         // get subject name from exam text
-                        const subjectName = exam.text.split(' - ')[1].trim();
+                        const subjectRaw = exam.text.split(' - ');
+
+                        const subjectName = subjectRaw[1].length > 6 ? subjectRaw[1].trim() : subjectRaw[2].trim();
 
                         const questionButtons = activePage.locator('button').filter({ hasText: /^Q\d+/ });
 
