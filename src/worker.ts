@@ -9,6 +9,8 @@ const TARGET_URL = process.env.TARGET_URL || "https://sei.univesp.br/index.xhtml
 const POLL_INTERVAL_MS = 10000; // 10 seconds
 
 let isWorkerRunning = false;
+let workerInterval: NodeJS.Timeout | null = null;
+let activeScraper: ScraperService | null = null;
 
 // Interface expected by the frontend
 interface LogsData {
@@ -66,6 +68,7 @@ export async function processNextJob() {
         };
 
         const scraper = new ScraperService(ENVIRONMENT);
+        activeScraper = scraper;
 
         addLog('Iniciando captura em background...', 'info');
         await db.updateJobProgress(job.id, state); // Initial save
@@ -80,6 +83,10 @@ export async function processNextJob() {
                 password,
                 targetUrl: TARGET_URL,
                 ignoredExams,
+                checkActiveAbort: async () => {
+                    const status = await db.getJobStatus(job.id);
+                    return status === 'FAILED';
+                },
                 onStatus: async (step, message) => {
                     addLog(message, step as any);
 
@@ -100,7 +107,22 @@ export async function processNextJob() {
                             justification: question.justification
                         };
 
-                        await db.saveScrapedQuestion(job.userId, mappedQuestion);
+                        // Database Retry: Exponential backoff for db inserts to prevent lock collision
+                        let dbRetries = 0;
+                        const maxDbRetries = 3;
+
+                        while (dbRetries < maxDbRetries) {
+                            try {
+                                await db.saveScrapedQuestion(job.userId, mappedQuestion);
+                                break;
+                            } catch (error: any) {
+                                dbRetries++;
+                                if (dbRetries >= maxDbRetries) throw error;
+                                const delay = Math.random() * 2000 + 500;
+                                console.warn(`[Worker] DB Lock/Error on question insert. Retrying (${dbRetries}/${maxDbRetries}) in ${Math.round(delay)}ms...`);
+                                await new Promise(r => setTimeout(r, delay));
+                            }
+                        }
 
                         state.metrics.found++;
                         state.metrics.imported++;
@@ -130,12 +152,21 @@ export async function processNextJob() {
 
         } catch (scraperError: any) {
             console.error(`[Worker] Scraper error on job ${job.id}:`, scraperError);
-            addLog(`Erro durante a captura: ${scraperError.message}`, 'error');
+
+            // Tratamento de Erro Fatal (Falha no Login / AVA Fora do Ar)
+            const errorMsg = scraperError.message || '';
+            if (errorMsg.includes('Timeout') || errorMsg.includes('locator') || errorMsg.includes('Login')) {
+                addLog(`Erro fatal: Credenciais inválidas ou AVA indisponível. (${errorMsg})`, 'error');
+            } else {
+                addLog(`Erro durante a captura: ${errorMsg}`, 'error');
+            }
+
             await db.failJob(job.id, state);
         } finally {
             try {
                 await scraper.abort();
             } catch (e) { }
+            activeScraper = null;
         }
 
     } catch (e) {
@@ -147,7 +178,20 @@ export async function processNextJob() {
 
 export function startWorkerLoop() {
     console.log('[Worker] Starting polling loop...');
-    setInterval(processNextJob, POLL_INTERVAL_MS);
+    workerInterval = setInterval(processNextJob, POLL_INTERVAL_MS);
     // Also trigger one immediately
     processNextJob();
+}
+
+export async function stopWorkerLoop() {
+    console.log('[Worker] Stopping polling loop...');
+    if (workerInterval) {
+        clearInterval(workerInterval);
+        workerInterval = null;
+    }
+
+    if (activeScraper) {
+        console.log('[Worker] Aborting active scraper...');
+        await activeScraper.abort();
+    }
 }

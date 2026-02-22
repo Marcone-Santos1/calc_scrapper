@@ -3,7 +3,7 @@ import helmet from 'helmet';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
-import { startWorkerLoop } from './worker';
+import { startWorkerLoop, stopWorkerLoop } from './worker';
 
 dotenv.config();
 
@@ -43,11 +43,25 @@ const server = app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
     console.log('Starting Background Worker...');
     startWorkerLoop();
+
+    // Macro-Retry: Start supervisor to clear stuck jobs every 1 hour
+    setInterval(async () => {
+        const { db } = await import('./services/db');
+        await db.clearStuckJobs();
+    }, 60 * 60 * 1000);
 });
 
 // Graceful Shutdown
 const shutdown = async (signal: string) => {
     console.log(`Received ${signal}. Shutting down gracefully...`);
+
+    // Stop worker and abort active scraper
+    try {
+        await stopWorkerLoop();
+    } catch (e) {
+        console.error('Error stopping worker loop:', e);
+    }
+
     server.close(() => {
         console.log('HTTP server closed.');
         process.exit(0);

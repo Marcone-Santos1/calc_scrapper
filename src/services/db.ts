@@ -59,6 +59,22 @@ export const db = {
     },
 
     /**
+     * Retorna o status atual do job (para verificar cancelamento ativo)
+     */
+    async getJobStatus(jobId: string): Promise<string | null> {
+        try {
+            const { rows } = await pool.query(`
+                SELECT status FROM "ImportJob" WHERE id = $1
+            `, [jobId]);
+            if (rows.length > 0) return rows[0].status;
+            return null;
+        } catch (e) {
+            console.error(`Failed to get status for job ${jobId}:`, e);
+            return null;
+        }
+    },
+
+    /**
      * Atualiza o progresso do scraping (logs e metrics)
      */
     async updateJobProgress(jobId: string, logsData: any) {
@@ -220,6 +236,27 @@ export const db = {
         } catch (e) {
             console.error('Failed to get user ignored exams:', e);
             return [];
+        }
+    },
+
+    /**
+     * Limpa jobs que ficaram travados em PROCESSING por mais de 30 minutos
+     */
+    async clearStuckJobs() {
+        try {
+            const res = await pool.query(`
+                UPDATE "ImportJob"
+                SET status = 'PENDING', "updatedAt" = NOW()
+                WHERE status = 'PROCESSING' 
+                  AND "updatedAt" < NOW() - INTERVAL '30 minutes'
+                RETURNING id
+            `);
+
+            if (res.rows.length > 0) {
+                console.log(`[Worker Supervisor] Reset ${res.rows.length} stuck jobs from PROCESSING to PENDING.`);
+            }
+        } catch (e) {
+            console.error('Failed to clear stuck jobs:', e);
         }
     }
 

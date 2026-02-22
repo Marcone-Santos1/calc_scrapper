@@ -9,6 +9,7 @@ interface ScraperOptions {
     onStatus: (step: string, message: string) => void;
     onQuestion: (question: any) => void;
     onExamDone: (examData: any) => void;
+    checkActiveAbort?: () => Promise<boolean>;
 }
 
 export class ScraperService {
@@ -19,6 +20,32 @@ export class ScraperService {
     constructor(environment: string) {
         console.log('Environment:', environment);
         this.environment = environment;
+    }
+
+    /**
+     * Tenta executar uma função assíncrona até um limite de vezes,
+     * aguardando entre as tentativas.
+     */
+    async withRetry<T>(fn: () => Promise<T>, maxRetries = 3, delayMs = 5000): Promise<T> {
+        let attempts = 0;
+        while (attempts < maxRetries) {
+            try {
+                return await fn();
+            } catch (error: any) {
+                attempts++;
+                console.warn(`[Retry ${attempts}/${maxRetries}] Falha na execução: ${error.message}`);
+
+                if (attempts >= maxRetries) {
+                    throw new Error(`Falha após ${maxRetries} tentativas: ${error.message}`);
+                }
+
+                // Aguarda um tempo antes de tentar novamente (Exponential backoff simples)
+                const waitTime = delayMs * attempts;
+                console.log(`Aguardando ${waitTime}ms antes da próxima tentativa...`);
+                await new Promise(resolve => setTimeout(resolve, waitTime));
+            }
+        }
+        throw new Error('Unreachable retry block');
     }
 
     async abort() {
@@ -32,7 +59,11 @@ export class ScraperService {
         }
     }
 
-    async scrape({ email, password, targetUrl, ignoredExams, onStatus, onQuestion, onExamDone }: ScraperOptions): Promise<void> {
+    async scrape(options: ScraperOptions): Promise<void> {
+        await this.withRetry(() => this._scrapeInner(options), 3, 10000);
+    }
+
+    private async _scrapeInner({ email, password, targetUrl, ignoredExams, onStatus, onQuestion, onExamDone, checkActiveAbort }: ScraperOptions): Promise<void> {
         try {
             onStatus('INIT', '🚀 Iniciando browser (Playwright)...');
 
@@ -74,6 +105,7 @@ export class ScraperService {
             onStatus('NAVIGATE', '🚗 Navegando para a URL...');
             await page.goto(targetUrl, { waitUntil: 'networkidle' });
             if (this.isAborted) throw new Error('Processo cancelado pelo usuário.');
+            if (checkActiveAbort && await checkActiveAbort()) throw new Error('ABORTED_BY_USER');
 
             onStatus('LOGIN', '🔐 Autenticando...');
 
@@ -94,6 +126,7 @@ export class ScraperService {
                 page.locator('#form\\:loginBtn\\:loginBtn').click(),
             ]);
             if (this.isAborted) throw new Error('Processo cancelado pelo usuário.');
+            if (checkActiveAbort && await checkActiveAbort()) throw new Error('ABORTED_BY_USER');
 
             // Optional stability delay
             await page.waitForTimeout(5000);
@@ -162,6 +195,7 @@ export class ScraperService {
             onStatus('NAVIGATE', '🚗 Página de provas aberta...');
 
             if (this.isAborted) throw new Error('Processo cancelado pelo usuário.');
+            if (checkActiveAbort && await checkActiveAbort()) throw new Error('ABORTED_BY_USER');
 
             const menuResultados = activePage.locator('span').filter({ hasText: 'Resultados' }).first();
             await menuResultados.waitFor({ state: 'visible' });
@@ -190,6 +224,7 @@ export class ScraperService {
             onStatus('ANALYZING', '📅 Mapeando anos letivos disponíveis...');
 
             if (this.isAborted) throw new Error('Processo cancelado pelo usuário.');
+            if (checkActiveAbort && await checkActiveAbort()) throw new Error('ABORTED_BY_USER');
 
             const yearSelectSelector = 'xpath=//h4[contains(., "Ano letivo:")]/../following-sibling::div//select';
 
@@ -209,6 +244,7 @@ export class ScraperService {
             for (const year of yearsData) {
 
                 if (this.isAborted) throw new Error('Processo cancelado pelo usuário.');
+                if (checkActiveAbort && await checkActiveAbort()) throw new Error('ABORTED_BY_USER');
 
                 console.log(`Verificando ano: ${year.label}...`);
 
@@ -263,6 +299,7 @@ export class ScraperService {
                     for (const exam of availableExams) {
 
                         if (this.isAborted) throw new Error('Processo cancelado pelo usuário.');
+                        if (checkActiveAbort && await checkActiveAbort()) throw new Error('ABORTED_BY_USER');
 
                         console.log(`   -> Processando prova: ${exam.text} (${exam.value})`);
                         const disciplinas = ['INT100', 'LET100', 'MATE100', 'MMB002'];
@@ -316,6 +353,7 @@ export class ScraperService {
                         for (let i = 0; i < totalQuestions; i++) {
 
                             if (this.isAborted) throw new Error('Processo cancelado pelo usuário.');
+                            if (checkActiveAbort && await checkActiveAbort()) throw new Error('ABORTED_BY_USER');
 
                             const currentButtons = await activePage.locator('button').filter({ hasText: /^Q\d+/ }).all();
 
@@ -327,12 +365,11 @@ export class ScraperService {
 
                             onStatus('PROCESSING', `👉 Processando questão ${buttonText}...`);
                             if (this.isAborted) throw new Error('Processo cancelado pelo usuário.');
+                            if (checkActiveAbort && await checkActiveAbort()) throw new Error('ABORTED_BY_USER');
 
                             await activePage.waitForTimeout(3500);
 
                             // Clicar e esperar navegação
-                            // Verificamos se já estamos na questão certa (se o botão tiver uma classe ativa, por exemplo btn-red vs btn-default)
-                            // Mas por segurança, clicamos para garantir.
                             await Promise.all([
                                 activePage.waitForLoadState('networkidle'),
                                 button.click()
@@ -341,7 +378,6 @@ export class ScraperService {
                             await activePage.waitForTimeout(1500);
 
                             // --- 1. Extração do Enunciado ---
-                            // O enunciado está dentro de .col-md-7.resposta > div (com borda tracejada)
                             const statementEl = activePage.locator('.col-md-7.resposta > div').first();
                             try {
                                 await statementEl.waitFor({ state: 'visible', timeout: 15000 });
@@ -354,83 +390,50 @@ export class ScraperService {
                             const statementText = await statementEl.innerText();
 
                             // --- 2. Extração da Justificativa ---
-                            // Está dentro de um blockquote, geralmente com a classe blockquote-green
                             const justificationEl = activePage.locator('blockquote');
                             let justificationText: string | null = null;
 
                             if (await justificationEl.count() > 0) {
                                 const rawJustification = await justificationEl.innerText();
-                                // Remove o título padrão que vem no texto
                                 justificationText = rawJustification
                                     .replace('Justificativa sobre todas as alternativas (corretas e incorretas)', '')
                                     .trim();
                             }
 
-                            // --- 3. Extração das Alternativas (Lógica Refinada) ---
-                            // Aqui usamos evaluate para rodar JS no navegador, pois o HTML mistura nós de texto e spans
+                            // --- 3. Extração das Alternativas ---
                             const alternativesData = await activePage.locator('.col-md-5').first().evaluate((node) => {
                                 const el = node as HTMLElement;
-                                // Função auxiliar para limpar espaços extras
                                 const cleanText = (t) => t.replace(/\s+/g, ' ').trim();
 
-                                // 1. Identificar metadados visuais (Correta / Selecionada) antes de limpar o texto
-                                const htmlContent = el.innerHTML;
-
-                                // No HTML fornecido:
-                                // Errada do usuário: <span style="color: #ff0000;">... <b>C) ...</b></span>
-                                // Correta: <span style="color: #00a000;">CORRETA<br><b>D) ...</b></span>
-
-                                // Vamos varrer os spans para achar as letras marcadas
                                 let correctLetter: string | null = null;
-                                let selectedLetter: string | null = null; // A que o usuário marcou (se errou) or acertou
+                                let selectedLetter: string | null = null;
 
                                 const spans = el.querySelectorAll('span');
                                 spans.forEach(span => {
                                     const style = span.getAttribute('style') || '';
                                     const text = span.innerText;
 
-                                    // Identifica a VERDE (Gabarito Oficial)
                                     if (style.includes('#00a000') || text.includes('CORRETA')) {
-                                        // Tenta achar a letra dentro deste span (Ex: "CORRETA D)")
                                         const match = span.innerText.match(/([A-E])\)/);
                                         if (match) correctLetter = match[1];
-
-                                        // Se não houver marcação vermelha na questão, o usuário acertou esta
-                                        // Mas vamos checar a vermelha para garantir
                                     }
 
-                                    // Identifica a VERMELHA (Erro do usuário)
                                     if (style.includes('#ff0000') || text.includes('ERRADA')) {
                                         const match = span.innerText.match(/([A-E])\)/);
                                         if (match) selectedLetter = match[1];
                                     }
                                 });
 
-                                // Se o usuário acertou, não tem span vermelho, então a selecionada é a correta
                                 if (!selectedLetter && correctLetter) {
-                                    // Verificar se existe algum indicativo de que o usuário acertou, 
-                                    // mas geralmente se não tem erro, é acerto.
-                                    // No seu HTML, quando erra aparece "Você marcou...", quando acerta só aparece "CORRETA" (que vira a selecionada).
-                                    // Vamos assumir logicamente:
                                     selectedLetter = correctLetter;
-                                    // PORÉM: Precisamos ter cuidado. Se o aluno deixou em branco? 
-                                    // O sistema da Univesp geralmente marca a correta em verde sempre.
                                 }
 
-                                // Caso de erro explícito: selectedLetter será diferente de correctLetter.
-
-                                // 2. Extração e Limpeza do Texto das Alternativas
-                                // Pegamos o texto completo do container e usamos Regex para separar
                                 let fullText = el.innerText;
-
-                                // Removemos as frases do sistema para não sujar o texto da alternativa
                                 fullText = fullText
                                     .replace(/Você marcou a alternativa ERRADA/g, '')
                                     .replace(/CORRETA/g, '')
-                                    .replace(/Justificativa sobre todas as alternativas.*/g, ''); // Caso o bloco pegue texto demais
+                                    .replace(/Justificativa sobre todas as alternativas.*/g, '');
 
-                                // Regex para capturar "A) Texto... B) Texto..."
-                                // O padrão é Letra, fecha parêntese, conteúdo, até a próxima Letra ou fim
                                 const optionsRegex = /([A-E])\)\s+([\s\S]+?)(?=(?:[A-E]\))|$)/g;
                                 const results: { letter: string; content: string; isCorrect: boolean; isSelected: boolean; }[] = [];
                                 let match;
@@ -439,10 +442,7 @@ export class ScraperService {
                                     const letter = match[1];
                                     let text = cleanText(match[2]);
 
-                                    // Remove metadados do final se vazaram (ex: infos de semana/dificuldade)
                                     if (letter === 'E') {
-                                        // A última alternativa (E) geralmente vem seguida dos metadados da questão
-                                        // Vamos cortar onde começam os metadados
                                         const metaIndex = text.indexOf('Semana:');
                                         if (metaIndex !== -1) {
                                             text = text.substring(0, metaIndex).trim();
@@ -457,16 +457,14 @@ export class ScraperService {
                                         letter,
                                         content: text,
                                         isCorrect: (letter === correctLetter),
-                                        isSelected: (letter === selectedLetter) // Aproximação
+                                        isSelected: (letter === selectedLetter)
                                     });
                                 }
 
-                                // 3. Extrair Metadados Extras que ficam no rodapé da div col-md-5
-                                const metaText = el.innerText; // Texto original sujo
-
+                                const metaText = el.innerText;
                                 const semanaMatch = metaText.match(/Semana:\s*(.+?)(?:\/|$)/);
                                 const dificuldadeMatch = metaText.match(/Nível de Dificuldade:\s*(.+?)(?:\n|$)/);
-                                const objetivoMatch = metaText.match(/Objetivo de Aprendizado:\s*([\s\S]+?)$/); // Pega até o fim
+                                const objetivoMatch = metaText.match(/Objetivo de Aprendizado:\s*([\s\S]+?)$/);
 
                                 return {
                                     alternatives: results,
@@ -479,26 +477,24 @@ export class ScraperService {
                             });
 
                             if (this.isAborted) throw new Error('Processo cancelado pelo usuário.');
+                            if (checkActiveAbort && await checkActiveAbort()) throw new Error('ABORTED_BY_USER');
 
                             // 4. Montagem do Objeto Final
                             const questionObj = {
-                                id: buttonText, // Ex: "Q01",
+                                id: buttonText,
                                 subjectName,
                                 statement: statementText,
                                 alternatives: alternativesData.alternatives,
                                 justification: justificationText,
                                 metadata: alternativesData.meta,
-                                images: [] as string[] // Implementar extração de imagens se houver tags <img> dentro de .resposta
+                                images: [] as string[]
                             };
 
-                            // Extrair URLs de imagens se houver (Enunciado ou Justificativa)
                             const images = await activePage.locator('.resposta img').evaluateAll(imgs => imgs.map(img => (img as HTMLImageElement).src));
                             questionObj.images = images;
 
                             onQuestion(questionObj);
-                            console.log(questionObj);
                             console.log(`   -> Questão ${buttonText} processada.`);
-
                         }
 
                         if (onExamDone) {
@@ -521,13 +517,13 @@ export class ScraperService {
 
             onStatus('DONE', '🏁 Verificação de todos os anos concluída.');
 
-        } catch (error) {
-            console.error('Scraper Error:', error);
-            if (this.isAborted) throw new Error('Processo cancelado pelo usuário.');
+        } catch (error: any) {
+            console.error('Scraper Inner Error:', error);
+            if (this.isAborted || error.message === 'ABORTED_BY_USER') throw new Error('Processo cancelado pelo usuário.');
             throw error;
         } finally {
             if (this.browser) {
-                onStatus('CLEANUP', '🧹 Fechando recursos...');
+                onStatus('CLEANUP', '🧹 Fechando recursos para possível retentativa...');
                 await this.browser.close();
                 this.browser = null;
             }
