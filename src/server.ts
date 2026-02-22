@@ -3,8 +3,7 @@ import helmet from 'helmet';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
-import { validateApiKey } from './middleware/auth';
-import { scrapeStreamController } from './controllers/scrapeController';
+import { startWorkerLoop } from './worker';
 
 dotenv.config();
 
@@ -33,9 +32,6 @@ app.get('/health', (req, res) => {
     res.json({ status: 'ok', uptime: process.uptime() });
 });
 
-// Protected Scrape Endpoint
-app.post('/api/v1/scrape-stream', validateApiKey, scrapeStreamController);
-
 // Global Error Handler
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
     console.error('Unhandled Error:', err);
@@ -45,6 +41,8 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 // Start Server
 const server = app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
+    console.log('Starting Background Worker...');
+    startWorkerLoop();
 });
 
 // Graceful Shutdown
@@ -64,3 +62,4 @@ const shutdown = async (signal: string) => {
 
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
+
