@@ -1,6 +1,9 @@
 import { Pool } from 'pg';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
+
+import { createId } from "@paralleldrive/cuid2";
+
 dotenv.config();
 
 const pool = new Pool({
@@ -142,7 +145,7 @@ export const db = {
                     VALUES ($1, $2, '#3BB2F6', '📚')
                     ON CONFLICT (name) DO NOTHING
                     RETURNING id
-                `, [crypto.randomUUID(), questionData.subjectName]);
+                `, [createId(), questionData.subjectName]);
 
                 if (newSubjRes.rows.length > 0) {
                     subjectId = newSubjRes.rows[0].id;
@@ -156,31 +159,38 @@ export const db = {
             }
 
             // 1.5. Check if Question already exists
+            const exactTitle = questionData.title.trim();
+            const exactBody = questionData.body.trim();
+            const cleanBody = questionData.body.replace(/[\s_*#\-`~]/g, '');
+
             const existingQuestionRes = await client.query(`
                 SELECT id FROM "Question" 
-                WHERE text = $1 AND "subjectId" = $2
-            `, [questionData.body, subjectId]);
+                WHERE TRIM(text) = $1
+                   OR TRIM(title) = $2
+                   OR REGEXP_REPLACE(text, '[\\s_*#\\-\`~]', '', 'g') = $3
+            `, [exactBody, exactTitle, cleanBody]);
 
             if (existingQuestionRes.rows.length > 0) {
+                console.log(`Question already exists`);
                 await client.query('ROLLBACK');
                 return existingQuestionRes.rows[0].id;
             }
 
             // 2. Insert Question
-            const questionId = crypto.randomUUID();
+            const questionId = createId();
             const weekText = questionData.metadata?.semana || null;
 
             await client.query(`
                 INSERT INTO "Question" (id, title, text, week, "createdAt", "updatedAt", views, "isVerified", "userId", "subjectId", "verificationRequested")
                 VALUES ($1, $2, $3, $4, NOW(), NOW(), 0, true, $5, $6, false)
-            `, [questionId, questionData.title, questionData.body, weekText, userId, subjectId]);
+            `, [questionId, questionData.title.trim(), questionData.body.trim(), weekText, userId, subjectId]);
 
             // 3. Insert Alternatives
             for (const alt of questionData.alternatives) {
                 await client.query(`
                     INSERT INTO "Alternative" (id, letter, text, "isCorrect", "questionId")
                     VALUES ($1, $2, $3, $4, $5)
-                `, [crypto.randomUUID(), alt.letter, alt.content, alt.isCorrect, questionId]);
+                `, [createId(), alt.letter, alt.content, alt.isCorrect, questionId]);
             }
 
             // 4. Insert Comment (Justification)
@@ -189,7 +199,7 @@ export const db = {
                 await client.query(`
                     INSERT INTO "Comment" (id, text, "createdAt", "userId", "questionId", "isDeleted")
                     VALUES ($1, $2, NOW(), $3, $4, false)
-                `, [crypto.randomUUID(), commentText, userId, questionId]);
+                `, [createId(), commentText, userId, questionId]);
             }
 
             // 5. Update Reputation Atomically
@@ -218,7 +228,7 @@ export const db = {
                 INSERT INTO "ScrapeHistory" (id, "userId", year, "examId", "examName", "completedAt")
                 VALUES ($1, $2, $3, $4, $5, NOW())
                 ON CONFLICT ("userId", "examId") DO NOTHING
-            `, [crypto.randomUUID(), userId, year, examId, examName]);
+            `, [createId(), userId, year, examId, examName]);
         } catch (e) {
             console.error('Failed to save scrape history:', e);
         }

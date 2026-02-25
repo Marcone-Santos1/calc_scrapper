@@ -13,6 +13,7 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@paralleldrive/cuid2": "^3.3.0",
     "chromedriver": "^143.0.2",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",

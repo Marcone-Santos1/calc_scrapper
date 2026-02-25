@@ -111,7 +111,8 @@ export class ScraperService {
 
             const emailSchema = z.string().email();
             const isValidEmail = emailSchema.safeParse(email);
-
+            console.log('Email:', email);
+            console.log('Is valid email:', isValidEmail.success);
             if (!isValidEmail.success) {
                 await page.locator('#form\\:usuario').fill(email);
             } else {
@@ -130,6 +131,12 @@ export class ScraperService {
 
             // Optional stability delay
             await page.waitForTimeout(5000);
+
+
+            if (isValidEmail.success) {
+                await page.locator('#password').fill(password);
+                await page.locator('button:has-text("Entrar")').click();
+            }
 
             onStatus('NAVIGATE', '🚗 Indo para a página de provas...');
 
@@ -313,12 +320,12 @@ export class ScraperService {
                         await activePage.waitForTimeout(5500);
 
                         console.log(`   -> Ambiente: ${this.environment}`);
-                        if (this.environment === 'dev') {
-                            if (disciplinas.some(disciplina => exam.text.includes(disciplina))) {
-                                console.log(`   -> Prova ${exam.text} não pertence à disciplina ${disciplinas.join(', ')} Pula...`);
-                                continue;
-                            }
-                        }
+                        // if (this.environment === 'dev') {
+                        //     if (disciplinas.some(disciplina => exam.text.includes(disciplina))) {
+                        //         console.log(`   -> Prova ${exam.text} não pertence à disciplina ${disciplinas.join(', ')} Pula...`);
+                        //         continue;
+                        //     }
+                        // }
 
                         console.log(`Ignored exams: ${ignoredExams}`);
                         console.log(`Exam text: ${exam.text}`);
